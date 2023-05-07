@@ -202,6 +202,7 @@ class PhotoLibrary:
                     "ASCENDING",
                     query_filter,
                     zone_id=self.zone_id,
+                    folder=folder
                 )
                 self._albums[folder_name] = album
 
@@ -293,6 +294,7 @@ class PhotoAlbum:
         query_filter=None,
         page_size=100,
         zone_id=None,
+        folder=None
     ):
         self.name = name
         self.service = service
@@ -308,6 +310,7 @@ class PhotoAlbum:
             self.zone_id = {"zoneName": "PrimarySync"}
 
         self._len = None
+        self._folder = folder
 
     @property
     def title(self):

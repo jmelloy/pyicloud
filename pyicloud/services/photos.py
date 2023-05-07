@@ -310,7 +310,7 @@ class PhotoAlbum:
             self.zone_id = {"zoneName": "PrimarySync"}
 
         self._len = None
-        self._folder = folder
+        self._folder = folder or {}
 
     @property
     def title(self):

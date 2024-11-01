@@ -1,4 +1,5 @@
 """Library base file."""
+
 from uuid import uuid1
 import inspect
 import json

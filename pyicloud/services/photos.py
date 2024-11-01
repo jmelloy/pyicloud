@@ -1,4 +1,5 @@
 """Photo service."""
+
 import json
 import base64
 from urllib.parse import urlencode
@@ -7,11 +8,13 @@ from datetime import datetime, timezone
 from pyicloud.exceptions import PyiCloudServiceNotActivatedException
 from pyicloud.utils import BPListReader
 
+
 class PhotoLibrary:
     """Represents a library in the user's photos.
 
     This provides access to all the albums as well as the photos.
     """
+
     SMART_FOLDERS = {
         "All Photos": {
             "obj_type": "CPLAssetByAssetDateWithoutHiddenOrDeleted",
@@ -142,10 +145,9 @@ class PhotoLibrary:
         self._albums = None
 
         url = f"{self.service.service_endpoint}/records/query?{urlencode(self.service.params)}"
-        json_data = json.dumps({
-            "query": {"recordType": "CheckIndexingState"},
-            "zoneID": self.zone_id
-        })
+        json_data = json.dumps(
+            {"query": {"recordType": "CheckIndexingState"}, "zoneID": self.zone_id}
+        )
         request = self.service.session.post(
             url, data=json_data, headers={"Content-type": "text/plain"}
         )
@@ -173,10 +175,13 @@ class PhotoLibrary:
                     continue
 
                 # TODO: Handle subfolders  # pylint: disable=fixme
-                if folder['recordName'] in ('----Root-Folder----',
-                    '----Project-Root-Folder----') or \
-                    (folder['fields'].get('isDeleted') and
-                     folder['fields']['isDeleted']['value']):
+                if folder["recordName"] in (
+                    "----Root-Folder----",
+                    "----Project-Root-Folder----",
+                ) or (
+                    folder["fields"].get("isDeleted")
+                    and folder["fields"]["isDeleted"]["value"]
+                ):
                     continue
 
                 folder_id = folder["recordName"]
@@ -202,7 +207,7 @@ class PhotoLibrary:
                     "ASCENDING",
                     query_filter,
                     zone_id=self.zone_id,
-                    folder=folder
+                    folder=folder,
                 )
                 self._albums[folder_name] = album
 
@@ -210,10 +215,9 @@ class PhotoLibrary:
 
     def _fetch_folders(self):
         url = f"{self.service.service_endpoint}/records/query?{urlencode(self.service.params)}"
-        json_data = json.dumps({
-            "query": {"recordType": "CPLAlbumByPositionLive"},
-            "zoneID": self.zone_id
-        })
+        json_data = json.dumps(
+            {"query": {"recordType": "CPLAlbumByPositionLive"}, "zoneID": self.zone_id}
+        )
 
         request = self.service.session.post(
             url, data=json_data, headers={"Content-type": "text/plain"}
@@ -259,13 +263,10 @@ class PhotosService(PhotoLibrary):
     @property
     def libraries(self):
         if not self._libraries:
-            url = ("%s/changes/database" %
-                (self.service_endpoint, ))
+            url = f"{self.service_endpoint}/changes/database"
 
             request = self.session.post(
-                url,
-                data="{}",
-                headers={"Content-type": "text/plain"}
+                url, data="{}", headers={"Content-type": "text/plain"}
             )
             response = request.json()
             zones = response["zones"]
@@ -294,7 +295,7 @@ class PhotoAlbum:
         query_filter=None,
         page_size=100,
         zone_id=None,
-        folder=None
+        folder=None,
     ):
         self.name = name
         self.service = service
@@ -320,7 +321,7 @@ class PhotoAlbum:
     @property
     def id(self):
         return self._folder.get("recordName")
-    
+
     @property
     def created(self):
         created = self._folder.get("created", {}).get("timestamp")
@@ -545,7 +546,7 @@ class PhotoAlbum:
                 "vidComplDurValue",
                 "vidComplVisibilityState",
                 "videoFrameRate",
-                "zoneID"
+                "zoneID",
             ],
             "zoneID": self.zone_id,
         }
@@ -573,17 +574,17 @@ class PhotoAsset:
         self._versions = None
 
     ITEM_TYPES = {
-        u"public.heic": u"image",
-        u"public.jpeg": u"image",
-        u"public.png": u"image",
-        u"com.apple.quicktime-movie": u"movie"
+        "public.heic": "image",
+        "public.jpeg": "image",
+        "public.png": "image",
+        "com.apple.quicktime-movie": "movie",
     }
 
     ITEM_TYPE_SUFFIX = {
-        u"public.heic": u"HEIC",
-        u"public.jpeg": u"JPEG",
-        u"public.png": u"PNG",
-        u"com.apple.quicktime-movie": u"MOV"
+        "public.heic": "HEIC",
+        "public.jpeg": "JPEG",
+        "public.png": "PNG",
+        "com.apple.quicktime-movie": "MOV",
     }
 
     PHOTO_VERSION_LOOKUP = {
@@ -594,7 +595,7 @@ class PhotoAsset:
         "sidecar": "resSidecar",
         "original": "resOriginal",
         "original_alt": "resOriginalAlt",
-        "live": "resOriginalVidCompl"
+        "live": "resOriginalVidCompl",
     }
 
     VIDEO_VERSION_LOOKUP = {
@@ -635,7 +636,7 @@ class PhotoAsset:
 
     @property
     def location(self):
-        if value := self._asset_record['fields'].get('locationEnc', {}).get("value"):
+        if value := self._asset_record["fields"].get("locationEnc", {}).get("value"):
             try:
                 return BPListReader(base64.b64decode(value)).parse()
             except Exception as e:
@@ -643,11 +644,15 @@ class PhotoAsset:
                     return BPListReader(value).parse()
                 except Exception as e2:
                     print(value, e)
-                    return 
+                    return
 
     @property
     def mediaMetaData(self):
-        if value := self._master_record['fields'].get('mediaMetaDataEnc', {}).get("value"):
+        if (
+            value := self._master_record["fields"]
+            .get("mediaMetaDataEnc", {})
+            .get("value")
+        ):
             try:
                 return BPListReader(base64.b64decode(value)).parse()
             except Exception as e:
@@ -655,36 +660,34 @@ class PhotoAsset:
                     return BPListReader(value).parse()
                 except Exception as e2:
                     print(value, e)
-                    return 
-                    
+                    return
 
     @property
     def latitude(self):
         if location := self.location:
-            return location['lat'][1]
+            return location["lat"][1]
         metadata = self.mediaMetaData
-        if metadata and metadata.get('{GPS}'):
-            return metadata['{GPS}']['Latitude'][1]
+        if metadata and metadata.get("{GPS}"):
+            return metadata["{GPS}"]["Latitude"][1]
 
-    
     @property
     def longitude(self):
         location = self.location
         if location:
-            return location['lon'][1]
+            return location["lon"][1]
         metadata = self.mediaMetaData
-        if metadata and metadata.get('{GPS}'):
-            return metadata['{GPS}']['Longitude'][1]
-        
+        if metadata and metadata.get("{GPS}"):
+            return metadata["{GPS}"]["Longitude"][1]
+
     @property
     def isHidden(self):
-        if self._asset_record['fields'].get('isHidden'):
-            return self._asset_record['fields'].get('isHidden')['value']
+        if self._asset_record["fields"].get("isHidden"):
+            return self._asset_record["fields"].get("isHidden")["value"]
 
     @property
     def isFavorite(self):
-        if self._asset_record['fields'].get('isFavorite'):
-            return self._asset_record['fields'].get('isFavorite')['value']
+        if self._asset_record["fields"].get("isFavorite"):
+            return self._asset_record["fields"].get("isFavorite")["value"]
 
     @property
     def size(self):
@@ -698,7 +701,6 @@ class PhotoAsset:
 
     @property
     def asset_date(self):
-
         """Gets the photo asset date."""
         try:
             return datetime.utcfromtimestamp(
@@ -724,12 +726,12 @@ class PhotoAsset:
 
     @property
     def item_type(self):
-        item_type = self._master_record['fields']['itemType']['value']
+        item_type = self._master_record["fields"]["itemType"]["value"]
         if item_type in self.ITEM_TYPES:
             return self.ITEM_TYPES[item_type]
-        if self.filename.lower().endswith(('.heic', '.png', '.jpg', '.jpeg')):
-            return 'image'
-        return 'movie'
+        if self.filename.lower().endswith((".heic", ".png", ".jpg", ".jpeg")):
+            return "image"
+        return "movie"
 
     @property
     def versions(self):

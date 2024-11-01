@@ -145,7 +145,7 @@ class PhotoLibrary:
 
         self._albums = None
 
-        url = f"{self.service_endpoint}/records/query?{urlencode(self.service.params)}"
+        url = f"{self.service.service_endpoint}/records/query?{urlencode(self.service.params)}"
 
         json_data = json.dumps(
             {"query": {"recordType": "CheckIndexingState"}, "zoneID": self.zone_id}
@@ -162,13 +162,6 @@ class PhotoLibrary:
             )
 
     @property
-    def service_endpoint(self):
-        """Returns the service URL."""
-        if self.shared:
-            return self.service.shared_service_endpoint
-        return self.service.service_endpoint
-
-    @property
     def albums(self):
         """Returns photo albums."""
         if not self._albums:
@@ -177,7 +170,6 @@ class PhotoLibrary:
                     self.service,
                     name,
                     zone_id=self.zone_id,
-                    service_endpoint=self.service_endpoint,
                     **props,
                 )
                 for (name, props) in self.SMART_FOLDERS.items()
@@ -256,11 +248,12 @@ class PhotosService(PhotoLibrary):
         self.session = session
         self.params = dict(params)
         self._service_root = service_root
-        self.service_endpoint = (
+
+        self._service_endpoint = (
             f"{self._service_root}/database/1/com.apple.photos.cloud/production/private"
         )
 
-        self.shared_service_endpoint = (
+        self._shared_service_endpoint = (
             f"{self._service_root}/database/1/com.apple.photos.cloud/production/shared"
         )
 
@@ -279,11 +272,18 @@ class PhotosService(PhotoLibrary):
         super().__init__(service=self, zone_id={"zoneName": "PrimarySync"})
 
     @property
+    def service_endpoint(self):
+        """Returns the service URL."""
+        if self.shared:
+            return self._shared_service_endpoint
+        return self._service_endpoint
+
+    @property
     def libraries(self):
         if not self._libraries:
             libraries = {}
 
-            url = f"{self.service_endpoint}/zones/list"
+            url = f"{self._service_endpoint}/zones/list"
 
             request = self.session.post(
                 url, data="{}", headers={"Content-type": "text/plain"}
@@ -295,7 +295,7 @@ class PhotosService(PhotoLibrary):
                 zone_name = zone["zoneID"]["zoneName"]
                 libraries[zone_name] = PhotoLibrary(self, zone["zoneID"])
 
-            shared_url = f"{self.shared_service_endpoint}/zones/list"
+            shared_url = f"{self._shared_service_endpoint}/zones/list"
 
             request = self.session.post(
                 shared_url, data="{}", headers={"Content-type": "text/plain"}
@@ -327,7 +327,6 @@ class PhotoAlbum:
         page_size=100,
         zone_id=None,
         folder=None,
-        service_endpoint=None,
     ):
         self.name = name
         self.service = service
@@ -336,7 +335,6 @@ class PhotoAlbum:
         self.direction = direction
         self.query_filter = query_filter
         self.page_size = page_size
-        self.service_endpoint = service_endpoint or service.service_endpoint
 
         if zone_id:
             self.zone_id = zone_id
@@ -366,7 +364,7 @@ class PhotoAlbum:
 
     def __len__(self):
         if self._len is None:
-            url = f"{self.service_endpoint}/internal/records/query/batch?{urlencode(self.service.params)}"
+            url = f"{self.service.service_endpoint}/internal/records/query/batch?{urlencode(self.service.params)}"
 
             request = self.service.session.post(
                 url,
@@ -411,7 +409,7 @@ class PhotoAlbum:
             offset = 0
 
         while True:
-            url = f"{self.service_endpoint}/records/query?{urlencode(self.service.params)}"
+            url = f"{self.service.service_endpoint}/records/query?{urlencode(self.service.params)}"
 
             request = self.service.session.post(
                 url,
@@ -596,14 +594,12 @@ class PhotoAlbum:
 class PhotoAsset:
     """A photo."""
 
-    def __init__(self, service, master_record, asset_record, service_endpoint=None):
+    def __init__(self, service, master_record, asset_record):
         self._service = service
         self._master_record = master_record
         self._asset_record = asset_record
 
         self._versions = None
-
-        self._service_endpoint = service_endpoint or service.service_endpoint
 
     ITEM_TYPES = {
         "public.heic": "image",
@@ -858,7 +854,7 @@ class PhotoAsset:
         )
 
         params = urlencode(self._service.params)
-        url = f"{self._service_endpoint}/records/modify?{params}"
+        url = f"{self.service.service_endpoint}/records/modify?{params}"
 
         return self._service.session.post(
             url, data=json_data, headers={"Content-type": "text/plain"}

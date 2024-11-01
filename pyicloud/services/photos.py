@@ -145,7 +145,7 @@ class PhotoLibrary:
 
         self._albums = None
 
-        url = f"{self.service.service_endpoint}/records/query?{urlencode(self.service.params)}"
+        url = f"{self.service.service_endpoint(shared)}/records/query?{urlencode(self.service.params)}"
 
         json_data = json.dumps(
             {"query": {"recordType": "CheckIndexingState"}, "zoneID": self.zone_id}
@@ -221,7 +221,7 @@ class PhotoLibrary:
         return self._albums
 
     def _fetch_folders(self):
-        url = f"{self.service_endpoint}/records/query?{urlencode(self.service.params)}"
+        url = f"{self.service_endpoint(self.shared)}/records/query?{urlencode(self.service.params)}"
         json_data = json.dumps(
             {"query": {"recordType": "CPLAlbumByPositionLive"}, "zoneID": self.zone_id}
         )
@@ -272,9 +272,9 @@ class PhotosService(PhotoLibrary):
         super().__init__(service=self, zone_id={"zoneName": "PrimarySync"})
 
     @property
-    def service_endpoint(self):
+    def service_endpoint(self, shared=False):
         """Returns the service URL."""
-        if self.shared:
+        if self.shared or shared:
             return self._shared_service_endpoint
         return self._service_endpoint
 

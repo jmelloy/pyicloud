@@ -246,6 +246,11 @@ class PhotosService(PhotoLibrary):
             % self._service_root
         )
 
+        self.shared_service_endpoint = (
+            "%s/database/1/com.apple.photos.cloud/production/shared"
+            % self._service_root
+        )
+
         self._libraries = None
 
         self.params.update({"remapEnums": True, "getCurrentSyncToken": True})
@@ -263,7 +268,9 @@ class PhotosService(PhotoLibrary):
     @property
     def libraries(self):
         if not self._libraries:
-            url = f"{self.service_endpoint}/changes/database"
+            libraries = {}
+
+            url = f"{self.service_endpoint}/zones/list"
 
             request = self.session.post(
                 url, data="{}", headers={"Content-type": "text/plain"}
@@ -271,11 +278,22 @@ class PhotosService(PhotoLibrary):
             response = request.json()
             zones = response["zones"]
 
-            libraries = {}
             for zone in zones:
-                if not zone.get("deleted"):
-                    zone_name = zone["zoneID"]["zoneName"]
-                    libraries[zone_name] = PhotoLibrary(self, zone["zoneID"])
+                zone_name = zone["zoneID"]["zoneName"]
+                libraries[zone_name] = PhotoLibrary(self, zone["zoneID"])
+
+            private_url = f"{self.shared_service_endpoint}/zones/list"
+
+            request = self.session.post(
+                private_url, data="{}", headers={"Content-type": "text/plain"}
+            )
+
+            response = request.json()
+
+            zones = response["zones"]
+            for zone in zones:
+                zone_name = zone["zoneID"]["zoneName"]
+                libraries[zone_name] = PhotoLibrary(self, zone["zoneID"])
 
             self._libraries = libraries
 

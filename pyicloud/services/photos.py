@@ -295,10 +295,10 @@ class PhotosService(PhotoLibrary):
                 zone_name = zone["zoneID"]["zoneName"]
                 libraries[zone_name] = PhotoLibrary(self, zone["zoneID"])
 
-            private_url = f"{self.shared_service_endpoint}/zones/list"
+            shared_url = f"{self.shared_service_endpoint}/zones/list"
 
             request = self.session.post(
-                private_url, data="{}", headers={"Content-type": "text/plain"}
+                shared_url, data="{}", headers={"Content-type": "text/plain"}
             )
 
             response = request.json()
@@ -411,9 +411,7 @@ class PhotoAlbum:
             offset = 0
 
         while True:
-            url = f"{self.service_endpoint}/records/query?{urlencode(
-                self.service.params
-            )}"
+            url = f"{self.service_endpoint}/records/query?{urlencode(self.service.params)}"
 
             request = self.service.session.post(
                 url,

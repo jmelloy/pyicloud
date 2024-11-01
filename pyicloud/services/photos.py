@@ -170,6 +170,7 @@ class PhotoLibrary:
                     self.service,
                     name,
                     zone_id=self.zone_id,
+                    shared=self.shared,
                     **props,
                 )
                 for (name, props) in self.SMART_FOLDERS.items()
@@ -221,7 +222,7 @@ class PhotoLibrary:
         return self._albums
 
     def _fetch_folders(self):
-        url = f"{self.service_endpoint(self.shared)}/records/query?{urlencode(self.service.params)}"
+        url = f"{self.service.service_endpoint(self.shared)}/records/query?{urlencode(self.service.params)}"
         json_data = json.dumps(
             {"query": {"recordType": "CPLAlbumByPositionLive"}, "zoneID": self.zone_id}
         )
@@ -271,7 +272,6 @@ class PhotosService(PhotoLibrary):
 
         super().__init__(service=self, zone_id={"zoneName": "PrimarySync"})
 
-    @property
     def service_endpoint(self, shared=False):
         """Returns the service URL."""
         if self.shared or shared:
@@ -327,6 +327,7 @@ class PhotoAlbum:
         page_size=100,
         zone_id=None,
         folder=None,
+        shared=False,
     ):
         self.name = name
         self.service = service
@@ -340,6 +341,7 @@ class PhotoAlbum:
             self.zone_id = zone_id
         else:
             self.zone_id = {"zoneName": "PrimarySync"}
+        self.shared = shared
 
         self._len = None
         self._folder = folder or {}
@@ -364,7 +366,7 @@ class PhotoAlbum:
 
     def __len__(self):
         if self._len is None:
-            url = f"{self.service.service_endpoint}/internal/records/query/batch?{urlencode(self.service.params)}"
+            url = f"{self.service.service_endpoint(self.shared)}/internal/records/query/batch?{urlencode(self.service.params)}"
 
             request = self.service.session.post(
                 url,
@@ -409,7 +411,7 @@ class PhotoAlbum:
             offset = 0
 
         while True:
-            url = f"{self.service.service_endpoint}/records/query?{urlencode(self.service.params)}"
+            url = f"{self.service.service_endpoint(self.shared)}/records/query?{urlencode(self.service.params)}"
 
             request = self.service.session.post(
                 url,
@@ -854,7 +856,7 @@ class PhotoAsset:
         )
 
         params = urlencode(self._service.params)
-        url = f"{self.service.service_endpoint}/records/modify?{params}"
+        url = f"{self.service.service_endpoint()}/records/modify?{params}"
 
         return self._service.session.post(
             url, data=json_data, headers={"Content-type": "text/plain"}

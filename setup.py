@@ -4,7 +4,7 @@
 from setuptools import setup, find_packages
 
 REPO_URL = "https://github.com/picklepete/pyicloud"
-VERSION = "2024.11.01.122600"
+VERSION = "2024.11.01.123047"
 
 with open("requirements.txt") as f:
     required = f.read().splitlines()

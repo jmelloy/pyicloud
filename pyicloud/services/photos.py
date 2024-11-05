@@ -6,7 +6,7 @@ from urllib.parse import urlencode
 
 from datetime import datetime, timezone
 from pyicloud.exceptions import PyiCloudServiceNotActivatedException
-from pyicloud.utils import BPListReader
+from pyicloud.utils import parse_fields
 
 
 class PhotoLibrary:
@@ -607,6 +607,11 @@ class PhotoAsset:
         self._master_record = master_record
         self._asset_record = asset_record
 
+        self.fields = parse_fields(self._master_record["fields"])
+        self.asset_fields = parse_fields(self._asset_record["fields"])
+
+        self.fields.update(self.asset_fields)
+
         self._versions = None
 
     ITEM_TYPES = {
@@ -650,97 +655,62 @@ class PhotoAsset:
     @property
     def filename(self):
         """Gets the photo file name."""
-        return base64.b64decode(
-            self._master_record["fields"]["filenameEnc"]["value"]
-        ).decode("utf-8")
+        return self.fields.get("filename")
 
     @property
     def caption(self):
         """Gets the photo caption/title."""
-        if self._asset_record["fields"].get("captionEnc"):
-            return base64.b64decode(
-                self._asset_record["fields"]["captionEnc"]["value"]
-            ).decode("utf-8")
+        return self.asset_fields.get("caption")
 
     @property
     def description(self):
         """Gets the photo description."""
-        if self._asset_record["fields"].get("extendedDescEnc"):
-            return base64.b64decode(
-                self._asset_record["fields"]["extendedDescEnc"]["value"]
-            ).decode("utf-8")
+        return self.asset_fields.get("extendedDesc")
 
     @property
     def location(self):
-        if value := self._asset_record["fields"].get("locationEnc", {}).get("value"):
-            try:
-                return BPListReader(base64.b64decode(value)).parse()
-            except Exception as e:
-                try:
-                    return BPListReader(value).parse()
-                except Exception as e2:
-                    print(value, e)
-                    return
+        return self.asset_fields.get("location")
 
     @property
     def mediaMetaData(self):
-        if (
-            value := self._master_record["fields"]
-            .get("mediaMetaDataEnc", {})
-            .get("value")
-        ):
-            try:
-                return BPListReader(base64.b64decode(value)).parse()
-            except Exception as e:
-                try:
-                    return BPListReader(value).parse()
-                except Exception as e2:
-                    print(value, e)
-                    return
+        return self.fields.get("mediaMetaData")
 
     @property
     def latitude(self):
-        if latitude := self._asset_record["fields"].get("locationLatitude"):
-            print(latitude)
+        if latitude := self.asset_fields.get("location", {}).get("lat"):
+            return latitude
 
-        if location := self.location:
-            return location["lat"][1]
         metadata = self.mediaMetaData
         if metadata and metadata.get("{GPS}"):
             if latitude := metadata["{GPS}"].get("Latitude"):
-                return latitude[1]
+                return latitude
             print(metadata)
             return None
 
     @property
     def longitude(self):
-        if longitude := self._asset_record["fields"].get("locationLongitude"):
-            print(longitude)
-
-        if location := self.location:
-            return location["lon"][1]
+        if longitude := self.asset_fields.get("location", {}).get("lon"):
+            return longitude
 
         metadata = self.mediaMetaData
         if metadata and metadata.get("{GPS}"):
             if longitude := metadata["{GPS}"].get("Longitude"):
-                return longitude[1]
+                return longitude
             print(metadata)
             return None
 
     @property
     def isHidden(self):
-        if self._asset_record["fields"].get("isHidden"):
-            return self._asset_record["fields"].get("isHidden", {})["value"]
+        return self.asset_fields.get("isHidden", False)
 
     @property
     def isFavorite(self):
-        if self._asset_record["fields"].get("isFavorite"):
-            return self._asset_record["fields"].get("isFavorite", {})["value"]
+        return self.asset_fields.get("isFavorite", False)
 
     @property
     def size(self):
         """Gets the photo size."""
-        return self._master_record["fields"]["resOriginalRes"]["value"]["size"]
+        return self.fields["resOriginalRes"]["size"]
 
     @property
     def created(self):
@@ -751,30 +721,27 @@ class PhotoAsset:
     def asset_date(self):
         """Gets the photo asset date."""
         try:
-            return datetime.utcfromtimestamp(
-                self._asset_record["fields"]["assetDate"]["value"] / 1000.0
-            ).replace(tzinfo=timezone.utc)
+            return datetime.fromtimestamp(
+                self.fields["assetDate"] / 1000.0, tzinfo=timezone.utc
+            )
         except KeyError:
-            return datetime.utcfromtimestamp(0).replace(tzinfo=timezone.utc)
+            return datetime.fromtimestamp(0, tzinfo=timezone.utc)
 
     @property
     def added_date(self):
         """Gets the photo added date."""
-        return datetime.utcfromtimestamp(
-            self._asset_record["fields"]["addedDate"]["value"] / 1000.0
-        ).replace(tzinfo=timezone.utc)
+        return datetime.fromtimestamp(
+            self.fields["addedDate"] / 1000.0, tzinfo=timezone.utc
+        )
 
     @property
     def dimensions(self):
         """Gets the photo dimensions."""
-        return (
-            self._master_record["fields"]["resOriginalWidth"]["value"],
-            self._master_record["fields"]["resOriginalHeight"]["value"],
-        )
+        return (self.fields["resOriginalWidth"], self.fields["resOriginalHeight"])
 
     @property
     def item_type(self):
-        item_type = self._master_record["fields"]["itemType"]["value"]
+        item_type = self.fields["itemType"]
         if item_type in self.ITEM_TYPES:
             return self.ITEM_TYPES[item_type]
         if self.filename.lower().endswith((".heic", ".png", ".jpg", ".jpeg")):

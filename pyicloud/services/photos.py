@@ -1,19 +1,24 @@
 """Photo service."""
+
 import json
 import base64
 from urllib.parse import urlencode
 
 from datetime import datetime, timezone
 from pyicloud.exceptions import PyiCloudServiceNotActivatedException
+from pyicloud.utils import BPListReader
 
 
-class PhotosService:
-    """The 'Photos' iCloud service."""
+class PhotoLibrary:
+    """Represents a library in the user's photos.
+
+    This provides access to all the albums as well as the photos.
+    """
 
     SMART_FOLDERS = {
         "All Photos": {
-            "obj_type": "CPLAssetByAddedDate",
-            "list_type": "CPLAssetAndMasterByAddedDate",
+            "obj_type": "CPLAssetByAssetDateWithoutHiddenOrDeleted",
+            "list_type": "CPLAssetAndMasterByAssetDateWithoutHiddenOrDeleted",
             "direction": "ASCENDING",
             "query_filter": None,
         },
@@ -83,6 +88,18 @@ class PhotosService:
                 }
             ],
         },
+        "Portrait": {
+            "obj_type": "CPLAssetInSmartAlbumByAssetDate:Portrait",
+            "list_type": "CPLAssetAndMasterInSmartAlbumByAssetDate",
+            "direction": "ASCENDING",
+            "query_filter": [
+                {
+                    "fieldName": "smartAlbum",
+                    "comparator": "EQUALS",
+                    "fieldValue": {"type": "STRING", "value": "DEPTH"},
+                }
+            ],
+        },
         "Screenshots": {
             "obj_type": "CPLAssetInSmartAlbumByAssetDate:Screenshot",
             "list_type": "CPLAssetAndMasterInSmartAlbumByAssetDate",
@@ -121,25 +138,19 @@ class PhotosService:
         },
     }
 
-    def __init__(self, service_root, session, params):
-        self.session = session
-        self.params = dict(params)
-        self._service_root = service_root
-        self.service_endpoint = (
-            "%s/database/1/com.apple.photos.cloud/production/private"
-            % self._service_root
-        )
+    def __init__(self, service, zone_id, shared=False):
+        self.service = service
+        self.zone_id = zone_id
+        self.shared = shared
 
         self._albums = None
 
-        self.params.update({"remapEnums": True, "getCurrentSyncToken": True})
+        url = f"{self.service.service_endpoint(shared)}/records/query?{urlencode(self.service.params)}"
 
-        url = f"{self.service_endpoint}/records/query?{urlencode(self.params)}"
-        json_data = (
-            '{"query":{"recordType":"CheckIndexingState"},'
-            '"zoneID":{"zoneName":"PrimarySync"}}'
+        json_data = json.dumps(
+            {"query": {"recordType": "CheckIndexingState"}, "zoneID": self.zone_id}
         )
-        request = self.session.post(
+        request = self.service.session.post(
             url, data=json_data, headers={"Content-type": "text/plain"}
         )
         response = request.json()
@@ -150,20 +161,18 @@ class PhotosService:
                 "Please try again in a few minutes."
             )
 
-        # TODO: Does syncToken ever change?  # pylint: disable=fixme
-        # self.params.update({
-        #     'syncToken': response['syncToken'],
-        #     'clientInstanceId': self.params.pop('clientId')
-        # })
-
-        self._photo_assets = {}
-
     @property
     def albums(self):
         """Returns photo albums."""
         if not self._albums:
             self._albums = {
-                name: PhotoAlbum(self, name, **props)
+                name: PhotoAlbum(
+                    self.service,
+                    name,
+                    zone_id=self.zone_id,
+                    shared=self.shared,
+                    **props,
+                )
                 for (name, props) in self.SMART_FOLDERS.items()
             }
 
@@ -174,7 +183,10 @@ class PhotosService:
                     continue
 
                 # TODO: Handle subfolders  # pylint: disable=fixme
-                if folder["recordName"] == "----Root-Folder----" or (
+                if folder["recordName"] in (
+                    "----Root-Folder----",
+                    "----Project-Root-Folder----",
+                ) or (
                     folder["fields"].get("isDeleted")
                     and folder["fields"]["isDeleted"]["value"]
                 ):
@@ -185,7 +197,7 @@ class PhotosService:
                     "CPLContainerRelationNotDeletedByAssetDate:%s" % folder_id
                 )
                 folder_name = base64.b64decode(
-                    folder["fields"]["albumNameEnc"]["value"]
+                    folder["fields"].get("albumNameEnc", {}).get("value")
                 ).decode("utf-8")
                 query_filter = [
                     {
@@ -196,25 +208,26 @@ class PhotosService:
                 ]
 
                 album = PhotoAlbum(
-                    self,
+                    self.service,
                     folder_name,
                     "CPLContainerRelationLiveByAssetDate",
                     folder_obj_type,
                     "ASCENDING",
                     query_filter,
+                    zone_id=self.zone_id,
+                    folder=folder,
                 )
                 self._albums[folder_name] = album
 
         return self._albums
 
     def _fetch_folders(self):
-        url = f"{self.service_endpoint}/records/query?{urlencode(self.params)}"
-        json_data = (
-            '{"query":{"recordType":"CPLAlbumByPositionLive"},'
-            '"zoneID":{"zoneName":"PrimarySync"}}'
+        url = f"{self.service.service_endpoint(self.shared)}/records/query?{urlencode(self.service.params)}"
+        json_data = json.dumps(
+            {"query": {"recordType": "CPLAlbumByPositionLive"}, "zoneID": self.zone_id}
         )
 
-        request = self.session.post(
+        request = self.service.session.post(
             url, data=json_data, headers={"Content-type": "text/plain"}
         )
         response = request.json()
@@ -225,6 +238,79 @@ class PhotosService:
     def all(self):
         """Returns all photos."""
         return self.albums["All Photos"]
+
+
+class PhotosService(PhotoLibrary):
+    """The 'Photos' iCloud service.
+
+    This also acts as a way to access the user's primary library."""
+
+    def __init__(self, service_root, session, params):
+        self.session = session
+        self.params = dict(params)
+        self._service_root = service_root
+
+        self._service_endpoint = (
+            f"{self._service_root}/database/1/com.apple.photos.cloud/production/private"
+        )
+
+        self._shared_service_endpoint = (
+            f"{self._service_root}/database/1/com.apple.photos.cloud/production/shared"
+        )
+
+        self._libraries = None
+
+        self.params.update({"remapEnums": True, "getCurrentSyncToken": True})
+
+        # TODO: Does syncToken ever change?  # pylint: disable=fixme
+        # self.params.update({
+        #     'syncToken': response['syncToken'],
+        #     'clientInstanceId': self.params.pop('clientId')
+        # })
+
+        self._photo_assets = {}
+
+        super().__init__(service=self, zone_id={"zoneName": "PrimarySync"})
+
+    def service_endpoint(self, shared=False):
+        """Returns the service URL."""
+        if self.shared or shared:
+            return self._shared_service_endpoint
+        return self._service_endpoint
+
+    @property
+    def libraries(self):
+        if not self._libraries:
+            libraries = {}
+
+            url = f"{self._service_endpoint}/zones/list"
+
+            request = self.session.post(
+                url, data="{}", headers={"Content-type": "text/plain"}
+            )
+            response = request.json()
+            zones = response["zones"]
+
+            for zone in zones:
+                zone_name = zone["zoneID"]["zoneName"]
+                libraries[zone_name] = PhotoLibrary(self, zone["zoneID"])
+
+            shared_url = f"{self._shared_service_endpoint}/zones/list"
+
+            request = self.session.post(
+                shared_url, data="{}", headers={"Content-type": "text/plain"}
+            )
+
+            response = request.json()
+
+            zones = response["zones"]
+            for zone in zones:
+                zone_name = zone["zoneID"]["zoneName"]
+                libraries[zone_name] = PhotoLibrary(self, zone["zoneID"], shared=True)
+
+            self._libraries = libraries
+
+        return self._libraries
 
 
 class PhotoAlbum:
@@ -239,6 +325,9 @@ class PhotoAlbum:
         direction,
         query_filter=None,
         page_size=100,
+        zone_id=None,
+        folder=None,
+        shared=False,
     ):
         self.name = name
         self.service = service
@@ -248,22 +337,37 @@ class PhotoAlbum:
         self.query_filter = query_filter
         self.page_size = page_size
 
+        if zone_id:
+            self.zone_id = zone_id
+        else:
+            self.zone_id = {"zoneName": "PrimarySync"}
+        self.shared = shared
+
         self._len = None
+        self._folder = folder or {}
 
     @property
     def title(self):
         """Gets the album name."""
         return self.name
 
+    @property
+    def id(self):
+        return self._folder.get("recordName")
+
+    @property
+    def created(self):
+        created = self._folder.get("created", {}).get("timestamp")
+        if created:
+            return datetime.fromtimestamp(created / 1000.0)
+
     def __iter__(self):
         return self.photos
 
     def __len__(self):
         if self._len is None:
-            url = "{}/internal/records/query/batch?{}".format(
-                self.service.service_endpoint,
-                urlencode(self.service.params),
-            )
+            url = f"{self.service.service_endpoint(self.shared)}/internal/records/query/batch?{urlencode(self.service.params)}"
+
             request = self.service.session.post(
                 url,
                 data=json.dumps(
@@ -283,7 +387,7 @@ class PhotoAlbum:
                                     "recordType": "HyperionIndexCountLookup",
                                 },
                                 "zoneWide": True,
-                                "zoneID": {"zoneName": "PrimarySync"},
+                                "zoneID": self.zone_id,
                             }
                         ]
                     }
@@ -305,11 +409,15 @@ class PhotoAlbum:
             offset = len(self) - 1
         else:
             offset = 0
+        return self.fetch_records(offset)
 
-        while True:
-            url = ("%s/records/query?" % self.service.service_endpoint) + urlencode(
-                self.service.params
-            )
+    def fetch_records(self, offset, limit=None):
+        if not limit:
+            limit = len(self)
+        total = 0
+        while total < limit:
+            url = f"{self.service.service_endpoint(self.shared)}/records/query?{urlencode(self.service.params)}"
+
             request = self.service.session.post(
                 url,
                 data=json.dumps(
@@ -339,6 +447,7 @@ class PhotoAlbum:
 
                 for master_record in master_records:
                     record_name = master_record["recordName"]
+                    total += 1
                     yield PhotoAsset(
                         self.service, master_record, asset_records[record_name]
                     )
@@ -364,105 +473,118 @@ class PhotoAlbum:
             },
             "resultsLimit": self.page_size * 2,
             "desiredKeys": [
-                "resJPEGFullWidth",
-                "resJPEGFullHeight",
-                "resJPEGFullFileType",
-                "resJPEGFullFingerprint",
-                "resJPEGFullRes",
-                "resJPEGLargeWidth",
-                "resJPEGLargeHeight",
-                "resJPEGLargeFileType",
-                "resJPEGLargeFingerprint",
-                "resJPEGLargeRes",
-                "resJPEGMedWidth",
-                "resJPEGMedHeight",
-                "resJPEGMedFileType",
-                "resJPEGMedFingerprint",
-                "resJPEGMedRes",
-                "resJPEGThumbWidth",
-                "resJPEGThumbHeight",
-                "resJPEGThumbFileType",
-                "resJPEGThumbFingerprint",
-                "resJPEGThumbRes",
-                "resVidFullWidth",
-                "resVidFullHeight",
-                "resVidFullFileType",
-                "resVidFullFingerprint",
-                "resVidFullRes",
-                "resVidMedWidth",
-                "resVidMedHeight",
-                "resVidMedFileType",
-                "resVidMedFingerprint",
-                "resVidMedRes",
-                "resVidSmallWidth",
-                "resVidSmallHeight",
-                "resVidSmallFileType",
-                "resVidSmallFingerprint",
-                "resVidSmallRes",
-                "resSidecarWidth",
-                "resSidecarHeight",
-                "resSidecarFileType",
-                "resSidecarFingerprint",
-                "resSidecarRes",
-                "itemType",
-                "dataClassType",
-                "filenameEnc",
-                "originalOrientation",
-                "resOriginalWidth",
-                "resOriginalHeight",
-                "resOriginalFileType",
-                "resOriginalFingerprint",
-                "resOriginalRes",
-                "resOriginalAltWidth",
-                "resOriginalAltHeight",
-                "resOriginalAltFileType",
-                "resOriginalAltFingerprint",
-                "resOriginalAltRes",
-                "resOriginalVidComplWidth",
-                "resOriginalVidComplHeight",
-                "resOriginalVidComplFileType",
-                "resOriginalVidComplFingerprint",
-                "resOriginalVidComplRes",
-                "isDeleted",
-                "isExpunged",
-                "dateExpunged",
-                "remappedRef",
-                "recordName",
-                "recordType",
-                "recordChangeTag",
-                "masterRef",
-                "adjustmentRenderType",
-                "assetDate",
                 "addedDate",
-                "isFavorite",
-                "isHidden",
-                "orientation",
-                "duration",
+                "adjustmentRenderType",
+                "adjustmentType",
+                "assetDate",
+                "assetHDRType",
                 "assetSubtype",
                 "assetSubtypeV2",
-                "assetHDRType",
                 "burstFlags",
                 "burstFlagsExt",
                 "burstId",
                 "captionEnc",
+                "codec",
+                "contributors",
+                "created",
+                "customRenderedValue",
+                "dataClassType",
+                "dateExpunged",
+                "duration",
+                "extendedDescEnc",
+                "filenameEnc",
+                "importedBy",
+                "importedByBundleIdentifierEnc",
+                "importedByDisplayNameEnc",
+                "isDeleted",
+                "isExpunged",
+                "isFavorite",
+                "isHidden",
+                "isSparsePrivateRecord",
+                "itemType",
+                "linkedShareRecordName",
+                "linkedShareZoneName",
+                "linkedShareZoneOwner",
                 "locationEnc",
-                "locationV2Enc",
                 "locationLatitude",
                 "locationLongitude",
-                "adjustmentType",
+                "locationV2Enc",
+                "masterRef",
+                "mediaMetaDataEnc",
+                "mediaMetaDataType",
+                "orientation",
+                "originalOrientation",
+                "recordChangeTag",
+                "recordName",
+                "recordType",
+                "remappedBy",
+                "remappedRef",
+                "resJPEGFullFileType",
+                "resJPEGFullFingerprint",
+                "resJPEGFullHeight",
+                "resJPEGFullRes",
+                "resJPEGFullWidth",
+                "resJPEGLargeFileType",
+                "resJPEGLargeFingerprint",
+                "resJPEGLargeHeight",
+                "resJPEGLargeRes",
+                "resJPEGLargeWidth",
+                "resJPEGMedFileType",
+                "resJPEGMedFingerprint",
+                "resJPEGMedHeight",
+                "resJPEGMedRes",
+                "resJPEGMedWidth",
+                "resJPEGThumbFileType",
+                "resJPEGThumbFingerprint",
+                "resJPEGThumbHeight",
+                "resJPEGThumbRes",
+                "resJPEGThumbWidth",
+                "resOriginalAltFileType",
+                "resOriginalAltFingerprint",
+                "resOriginalAltHeight",
+                "resOriginalAltRes",
+                "resOriginalAltWidth",
+                "resOriginalFileType",
+                "resOriginalFingerprint",
+                "resOriginalHeight",
+                "resOriginalRes",
+                "resOriginalVidComplFileType",
+                "resOriginalVidComplFingerprint",
+                "resOriginalVidComplHeight",
+                "resOriginalVidComplRes",
+                "resOriginalVidComplWidth",
+                "resOriginalWidth",
+                "resSidecarFileType",
+                "resSidecarFingerprint",
+                "resSidecarHeight",
+                "resSidecarRes",
+                "resSidecarWidth",
+                "resVidFullFileType",
+                "resVidFullFingerprint",
+                "resVidFullHeight",
+                "resVidFullRes",
+                "resVidFullWidth",
+                "resVidHDRMedRes",
+                "resVidMedFileType",
+                "resVidMedFingerprint",
+                "resVidMedHeight",
+                "resVidMedRes",
+                "resVidMedWidth",
+                "resVidSmallFileType",
+                "resVidSmallFingerprint",
+                "resVidSmallHeight",
+                "resVidSmallRes",
+                "resVidSmallWidth",
                 "timeZoneOffset",
-                "vidComplDurValue",
-                "vidComplDurScale",
-                "vidComplDispValue",
                 "vidComplDispScale",
+                "vidComplDispValue",
+                "vidComplDurScale",
+                "vidComplDurValue",
                 "vidComplVisibilityState",
-                "customRenderedValue",
-                "containerId",
-                "itemId",
-                "position",
-                "isKeyAsset",
+                "videoFrameRate",
+                "zoneID",
             ],
-            "zoneID": {"zoneName": "PrimarySync"},
+            "zoneID": self.zone_id,
         }
 
         if query_filter:
@@ -487,16 +609,37 @@ class PhotoAsset:
 
         self._versions = None
 
+    ITEM_TYPES = {
+        "public.heic": "image",
+        "public.jpeg": "image",
+        "public.png": "image",
+        "com.apple.quicktime-movie": "movie",
+    }
+
+    ITEM_TYPE_SUFFIX = {
+        "public.heic": "HEIC",
+        "public.jpeg": "JPEG",
+        "public.png": "PNG",
+        "com.apple.quicktime-movie": "MOV",
+    }
+
     PHOTO_VERSION_LOOKUP = {
-        "original": "resOriginal",
+        "full": "resJPEGFull",
+        "large": "resJPEGLarge",
         "medium": "resJPEGMed",
         "thumb": "resJPEGThumb",
+        "sidecar": "resSidecar",
+        "original": "resOriginal",
+        "original_alt": "resOriginalAlt",
+        "live": "resOriginalVidCompl",
     }
 
     VIDEO_VERSION_LOOKUP = {
-        "original": "resOriginal",
+        "full": "resVidFull",
         "medium": "resVidMed",
         "thumb": "resVidSmall",
+        "original": "resOriginal",
+        "original_compl": "resOriginalVidCompl",
     }
 
     @property
@@ -510,6 +653,89 @@ class PhotoAsset:
         return base64.b64decode(
             self._master_record["fields"]["filenameEnc"]["value"]
         ).decode("utf-8")
+
+    @property
+    def caption(self):
+        """Gets the photo caption/title."""
+        if self._asset_record["fields"].get("captionEnc"):
+            return base64.b64decode(
+                self._asset_record["fields"]["captionEnc"]["value"]
+            ).decode("utf-8")
+
+    @property
+    def description(self):
+        """Gets the photo description."""
+        if self._asset_record["fields"].get("extendedDescEnc"):
+            return base64.b64decode(
+                self._asset_record["fields"]["extendedDescEnc"]["value"]
+            ).decode("utf-8")
+
+    @property
+    def location(self):
+        if value := self._asset_record["fields"].get("locationEnc", {}).get("value"):
+            try:
+                return BPListReader(base64.b64decode(value)).parse()
+            except Exception as e:
+                try:
+                    return BPListReader(value).parse()
+                except Exception as e2:
+                    print(value, e)
+                    return
+
+    @property
+    def mediaMetaData(self):
+        if (
+            value := self._master_record["fields"]
+            .get("mediaMetaDataEnc", {})
+            .get("value")
+        ):
+            try:
+                return BPListReader(base64.b64decode(value)).parse()
+            except Exception as e:
+                try:
+                    return BPListReader(value).parse()
+                except Exception as e2:
+                    print(value, e)
+                    return
+
+    @property
+    def latitude(self):
+        if latitude := self._asset_record["fields"].get("locationLatitude"):
+            print(latitude)
+
+        if location := self.location:
+            return location["lat"][1]
+        metadata = self.mediaMetaData
+        if metadata and metadata.get("{GPS}"):
+            if latitude := metadata["{GPS}"].get("Latitude"):
+                return latitude[1]
+            print(metadata)
+            return None
+
+    @property
+    def longitude(self):
+        if longitude := self._asset_record["fields"].get("locationLongitude"):
+            print(longitude)
+
+        if location := self.location:
+            return location["lon"][1]
+
+        metadata = self.mediaMetaData
+        if metadata and metadata.get("{GPS}"):
+            if longitude := metadata["{GPS}"].get("Longitude"):
+                return longitude[1]
+            print(metadata)
+            return None
+
+    @property
+    def isHidden(self):
+        if self._asset_record["fields"].get("isHidden"):
+            return self._asset_record["fields"].get("isHidden", {})["value"]
+
+    @property
+    def isFavorite(self):
+        if self._asset_record["fields"].get("isFavorite"):
+            return self._asset_record["fields"].get("isFavorite", {})["value"]
 
     @property
     def size(self):
@@ -547,47 +773,68 @@ class PhotoAsset:
         )
 
     @property
+    def item_type(self):
+        item_type = self._master_record["fields"]["itemType"]["value"]
+        if item_type in self.ITEM_TYPES:
+            return self.ITEM_TYPES[item_type]
+        if self.filename.lower().endswith((".heic", ".png", ".jpg", ".jpeg")):
+            return "image"
+        return "movie"
+
+    @property
     def versions(self):
         """Gets the photo versions."""
         if not self._versions:
             self._versions = {}
-            if "resVidSmallRes" in self._master_record["fields"]:
+            if self.item_type == "movie":
                 typed_version_lookup = self.VIDEO_VERSION_LOOKUP
             else:
                 typed_version_lookup = self.PHOTO_VERSION_LOOKUP
 
-            for key, prefix in typed_version_lookup.items():
-                if "%sRes" % prefix in self._master_record["fields"]:
-                    fields = self._master_record["fields"]
-                    version = {"filename": self.filename}
+            # Prefer using adjusted (i.e. user edited) versions of photos if available.
+            for record in (self._master_record, self._asset_record):
+                for key, prefix in typed_version_lookup.items():
+                    if f"{prefix}Res" in record["fields"]:
+                        fields = record["fields"]
+                        version = {"filename": self.filename}
 
-                    width_entry = fields.get("%sWidth" % prefix)
-                    if width_entry:
-                        version["width"] = width_entry["value"]
-                    else:
-                        version["width"] = None
+                        width_entry = fields.get("%sWidth" % prefix)
+                        if width_entry:
+                            version["width"] = width_entry["value"]
+                        else:
+                            version["width"] = None
 
-                    height_entry = fields.get("%sHeight" % prefix)
-                    if height_entry:
-                        version["height"] = height_entry["value"]
-                    else:
-                        version["height"] = None
+                        height_entry = fields.get("%sHeight" % prefix)
+                        if height_entry:
+                            version["height"] = height_entry["value"]
+                        else:
+                            version["height"] = None
 
-                    size_entry = fields.get("%sRes" % prefix)
-                    if size_entry:
-                        version["size"] = size_entry["value"]["size"]
-                        version["url"] = size_entry["value"]["downloadURL"]
-                    else:
-                        version["size"] = None
-                        version["url"] = None
+                        size_entry = fields.get("%sRes" % prefix)
+                        if size_entry:
+                            version["size"] = size_entry["value"]["size"]
+                            version["url"] = size_entry["value"]["downloadURL"]
+                        else:
+                            version["size"] = None
+                            version["url"] = None
 
-                    type_entry = fields.get("%sFileType" % prefix)
-                    if type_entry:
-                        version["type"] = type_entry["value"]
-                    else:
-                        version["type"] = None
+                        type_entry = fields.get("%sFileType" % prefix)
+                        type_entry = fields.get("%sFileType" % prefix)
+                        if type_entry:
+                            version["type"] = type_entry["value"]
 
-                    self._versions[key] = version
+                            *base, suffix = self.filename.split(".")
+                            base = ".".join(base)
+                            suffix = self.ITEM_TYPE_SUFFIX.get(
+                                type_entry["value"], suffix
+                            )
+
+                            version["filename"] = f"{base}.{suffix}"
+
+                        else:
+                            version["type"] = None
+
+                        self._versions[key] = version
 
         return self._versions
 
@@ -626,9 +873,8 @@ class PhotoAsset:
             )
         )
 
-        endpoint = self._service.service_endpoint
         params = urlencode(self._service.params)
-        url = f"{endpoint}/records/modify?{params}"
+        url = f"{self.service.service_endpoint()}/records/modify?{params}"
 
         return self._service.session.post(
             url, data=json_data, headers={"Content-type": "text/plain"}

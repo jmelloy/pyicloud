@@ -1,4 +1,5 @@
 """Library base file."""
+
 from uuid import uuid1
 import inspect
 import json
@@ -40,6 +41,20 @@ HEADER_DATA = {
 }
 
 
+def get_request_logger(stack_level=2):
+    # Safely get the frame from the desired stack level
+    try:
+        frame = inspect.stack()[stack_level]
+        module = inspect.getmodule(frame[0])
+        if module:
+            return logging.getLogger(module.__name__).getChild("http")
+    finally:
+        # Always clean up to avoid reference cycles
+        del frame
+
+    return logging.getLogger("unknown").getChild("http")
+
+
 class PyiCloudPasswordFilter(logging.Filter):
     """Password log hider."""
 
@@ -65,9 +80,7 @@ class PyiCloudSession(Session):
     def request(self, method, url, **kwargs):  # pylint: disable=arguments-differ
 
         # Charge logging to the right service endpoint
-        callee = inspect.stack()[2]
-        module = inspect.getmodule(callee[0])
-        request_logger = logging.getLogger(module.__name__).getChild("http")
+        request_logger = get_request_logger()
         if self.service.password_filter not in request_logger.filters:
             request_logger.addFilter(self.service.password_filter)
 

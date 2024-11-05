@@ -337,43 +337,60 @@ class PyiCloudService:
             if self.session_data.get("session_id"):
                 headers["X-Apple-ID-Session-Id"] = self.session_data.get("session_id")
 
-            class SrpPassword():
+            class SrpPassword:
                 def __init__(self, password: str):
                     self.password = password
-                def set_encrypt_info(self, salt: bytes, iterations: int, key_length: int):
+
+                def set_encrypt_info(
+                    self, salt: bytes, iterations: int, key_length: int
+                ):
                     self.salt = salt
                     self.iterations = iterations
                     self.key_length = key_length
+
                 def encode(self):
-                    password_hash = hashlib.sha256(self.password.encode('utf-8')).digest()
-                    return hashlib.pbkdf2_hmac('sha256', password_hash, salt, iterations, key_length)
-                    
+                    password_hash = hashlib.sha256(
+                        self.password.encode("utf-8")
+                    ).digest()
+                    return hashlib.pbkdf2_hmac(
+                        "sha256", password_hash, salt, iterations, key_length
+                    )
+
             srp_password = SrpPassword(self.user["password"])
             srp.rfc5054_enable()
             srp.no_username_in_x()
-            usr = srp.User(self.user["accountName"], srp_password, hash_alg=srp.SHA256, ng_type=srp.NG_2048)
+            usr = srp.User(
+                self.user["accountName"],
+                srp_password,
+                hash_alg=srp.SHA256,
+                ng_type=srp.NG_2048,
+            )
             uname, A = usr.start_authentication()
             data = {
-                'a': base64.b64encode(A).decode(),
-                'accountName': uname,
-                'protocols': ['s2k', 's2k_fo']
+                "a": base64.b64encode(A).decode(),
+                "accountName": uname,
+                "protocols": ["s2k", "s2k_fo"],
             }
-            
+
             try:
-                response = self.session.post("%s/signin/init" % self.AUTH_ENDPOINT, data=json.dumps(data), headers=headers)
+                response = self.session.post(
+                    "%s/signin/init" % self.AUTH_ENDPOINT,
+                    data=json.dumps(data),
+                    headers=headers,
+                )
                 response.raise_for_status()
             except PyiCloudAPIResponseException as error:
                 msg = "Failed to initiate srp authentication."
                 raise PyiCloudFailedLoginException(msg, error) from error
-                
+
             body = response.json()
-            salt = base64.b64decode(body['salt'])
-            b = base64.b64decode(body['b'])
-            c = body['c']
-            iterations = body['iteration']
+            salt = base64.b64decode(body["salt"])
+            b = base64.b64decode(body["b"])
+            c = body["c"]
+            iterations = body["iteration"]
             key_length = 32
             srp_password.set_encrypt_info(salt, iterations, key_length)
-            m1 = usr.process_challenge( salt, b )
+            m1 = usr.process_challenge(salt, b)
             m2 = usr.H_AMK
             data = {
                 "accountName": uname,
@@ -385,7 +402,7 @@ class PyiCloudService:
             }
             if self.session_data.get("trust_token"):
                 data["trustTokens"] = [self.session_data.get("trust_token")]
-                
+
             try:
                 self.session.post(
                     "%s/signin/complete" % self.AUTH_ENDPOINT,

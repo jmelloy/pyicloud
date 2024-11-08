@@ -6,7 +6,6 @@ def parse_fields(fields: dict, keypath="") -> dict:
 
     parsed = {}
     for key, value in fields.items():
-        print(f"{keypath}.{key}", type(value), str(value)[:20])
         val = value
 
         if type(value) == dict:

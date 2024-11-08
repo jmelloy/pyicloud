@@ -722,16 +722,16 @@ class PhotoAsset:
         """Gets the photo asset date."""
         try:
             return datetime.fromtimestamp(
-                self.fields["assetDate"] / 1000.0, tzinfo=timezone.utc
+                self.fields["assetDate"] / 1000.0, tz=timezone.utc
             )
         except KeyError:
-            return datetime.fromtimestamp(0, tzinfo=timezone.utc)
+            return datetime.fromtimestamp(0, tz=timezone.utc)
 
     @property
     def added_date(self):
         """Gets the photo added date."""
         return datetime.fromtimestamp(
-            self.fields["addedDate"] / 1000.0, tzinfo=timezone.utc
+            self.fields["addedDate"] / 1000.0, tz=timezone.utc
         )
 
     @property

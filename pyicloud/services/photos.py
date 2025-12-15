@@ -306,7 +306,13 @@ class PhotosService(PhotoLibrary):
             zones = response["zones"]
             for zone in zones:
                 zone_name = zone["zoneID"]["zoneName"]
-                libraries[zone_name] = PhotoLibrary(self, zone["zoneID"], shared=True)
+                try:
+                    libraries[zone_name] = PhotoLibrary(
+                        self, zone["zoneID"], shared=True
+                    )
+                except Exception:
+                    # Skip shared libraries that can't be accessed
+                    continue
 
             self._libraries = libraries
 

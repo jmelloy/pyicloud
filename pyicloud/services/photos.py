@@ -89,7 +89,7 @@ class PhotoLibrary:
             ],
         },
         "Portrait": {
-            "obj_type": "CPLAssetInSmartAlbumByAssetDate:Portrait",
+            "obj_type": "CPLAssetInSmartAlbumByAssetDate:Depth",
             "list_type": "CPLAssetAndMasterInSmartAlbumByAssetDate",
             "direction": "ASCENDING",
             "query_filter": [
@@ -231,8 +231,22 @@ class PhotoLibrary:
             url, data=json_data, headers={"Content-type": "text/plain"}
         )
         response = request.json()
+        records = response["records"]
+        while "continuationMarker" in response:
+            json_data = json.dumps(
+                {
+                    "query": {"recordType": "CPLAlbumByPositionLive"},
+                    "zoneID": self.zone_id,
+                    "continuationMarker": response["continuationMarker"],
+                }
+            )
 
-        return response["records"]
+            request = self.service.session.post(
+                url, data=json_data, headers={"Content-type": "text/plain"}
+            )
+            response = request.json()
+            records.extend(response["records"])
+        return records
 
     @property
     def all(self):

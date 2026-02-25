@@ -1,6 +1,11 @@
 """Library tests."""
+import base64
+import hashlib
 import json
 from requests import Response
+
+import srp
+import srp._pysrp as _pysrp
 
 from pyicloud import base
 
@@ -34,6 +39,31 @@ from .const_drive import (
     DRIVE_FILE_DOWNLOAD_WORKING,
 )
 from .const_findmyiphone import FMI_FAMILY_WORKING
+
+# SRP mock constants
+SRP_SALT = b"\x01" * 16
+SRP_ITERATIONS = 20
+SRP_KEY_LENGTH = 32
+SRP_C = "srp_session_token"
+
+
+def _compute_srp_vkey(username, password, salt, iterations, key_length):
+    """Compute SRP verification key for the mock."""
+    srp.rfc5054_enable()
+    srp.no_username_in_x()
+    _pysrp.rfc5054_enable()
+    _pysrp.no_username_in_x()
+
+    # Derive password the same way the client does
+    password_hash = hashlib.sha256(password.encode("utf-8")).digest()
+    derived = hashlib.pbkdf2_hmac("sha256", password_hash, salt, iterations, key_length)
+
+    # Compute verification key using pure Python SRP internals
+    N, g = _pysrp.get_ng(srp.NG_2048, None, None)
+    hash_class = _pysrp._hash_map[srp.SHA256]
+    x = _pysrp.gen_x(hash_class, salt, username, derived)
+    v = pow(g, x, N)
+    return _pysrp.long_to_bytes(v)
 
 
 class ResponseMock(Response):
@@ -92,17 +122,48 @@ class PyiCloudSessionMock(base.PyiCloudSession):
                 self._raise_error(None, "Session expired")
 
         if self.service.AUTH_ENDPOINT in url:
-            if "signin" in url and method == "POST":
-                if (
-                    data.get("accountName") not in VALID_USERS
-                    or data.get("password") != VALID_PASSWORD
-                ):
+            if "signin/init" in url and method == "POST":
+                if data.get("accountName") not in VALID_USERS:
                     self._raise_error(None, "Unknown reason")
-                if data.get("accountName") == REQUIRES_2FA_USER:
-                    self.service.session_data["session_token"] = REQUIRES_2FA_TOKEN
-                    return ResponseMock(AUTH_OK)
 
-                self.service.session_data["session_token"] = VALID_TOKEN
+                A = base64.b64decode(data.get("a"))
+                vkey = _compute_srp_vkey(
+                    data.get("accountName"),
+                    VALID_PASSWORD,
+                    SRP_SALT,
+                    SRP_ITERATIONS,
+                    SRP_KEY_LENGTH,
+                )
+                self._srp_verifier = srp.Verifier(
+                    data.get("accountName"),
+                    SRP_SALT,
+                    vkey,
+                    A,
+                    hash_alg=srp.SHA256,
+                    ng_type=srp.NG_2048,
+                )
+                s, B = self._srp_verifier.get_challenge()
+                return ResponseMock(
+                    {
+                        "salt": base64.b64encode(SRP_SALT).decode(),
+                        "b": base64.b64encode(B).decode(),
+                        "c": SRP_C,
+                        "iteration": SRP_ITERATIONS,
+                    }
+                )
+
+            if "signin/complete" in url and method == "POST":
+                M = base64.b64decode(data.get("m1"))
+                self._srp_verifier.verify_session(M)
+
+                if not self._srp_verifier.authenticated():
+                    self._raise_error(None, "Unknown reason")
+
+                account_name = data.get("accountName")
+                if account_name == REQUIRES_2FA_USER:
+                    self.service.session_data["session_token"] = REQUIRES_2FA_TOKEN
+                else:
+                    self.service.session_data["session_token"] = VALID_TOKEN
                 return ResponseMock(AUTH_OK)
 
             if "securitycode" in url and method == "POST":
